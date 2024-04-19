@@ -1,0 +1,146 @@
+#!/usr/bin/env sh
+# Doc https://iterm2.com/documentation-images.html
+## There are issues for android toybox mksh to perform
+##```sh
+##  printf "\033]1337;File=inline=%s" "$2"
+##```
+## Tested supported formats on termux with sixel and vscode : [JPEG, PNG, GIF]
+set -eu
+
+err() { printf '%s\n' "${SCRIPT_NAME}: error: $*" && exit 1; }
+
+b64_encode() { base64 -w0; }
+b64_decode() { base64 -d; }
+has_stdin() { ! test -t 0; }
+
+# print_image [filename] [inline] [base64contents] [width] [height] [preserve_aspect_ratio] [file_type]
+#   filename:                 Filename to convey to client
+#   inline:                   0 or 1, if set to 1, the file will be displayed inline, otherwise, it will be downloaded
+#   base64contents:           Base64-encoded contents
+#   width:                     set output width of the image in character cells, pixels or percent
+#   height:                   set output height of the image in character cells, pixels or percent
+#   preserve_aspect_ratio:    0 or 1, if set to 1, fill the specified width and height as much as possible without stretching the image
+#   file_type:                 Empty string or file type like "application/json" or ".js".
+print_image() {
+	case "${TERM}" in
+	screen* | tmux*) printf "\033Ptmux;\033" ;;
+	esac
+
+	printf "\033]1337;File=inline=%s" "$2"
+	printf ";size=%d" "$(printf "%s" "$3" | b64_decode | wc -c)"
+	if [ -n "$1" ]; then printf ";name=%s" "$(printf "%s" "$1" | b64_encode)"; fi
+	if [ -n "$4" ]; then printf ";width=%s" "$4"; fi
+	if [ -n "$5" ]; then printf ";height=%s" "$5"; fi
+	if [ -n "$6" ]; then printf ";preserveAspectRatio=%s" "$6"; fi
+	if [ -n "$7" ]; then printf ";type=%s" "$7"; fi
+	printf ":%s" "$3"
+	printf "\a"
+
+	case "${TERM}" in
+	screen* | tmux*) printf "\033\\" ;;
+	esac
+
+	printf '\n'
+}
+
+show_help() {
+	printf '%s' "\
+Display images inline in the iTerm2 using Inline Images Protocol
+
+Usage: ${SCRIPT_NAME} [--width width] [--height height] [--file-type file-type] filename ...
+       ${SCRIPT_NAME} [--width width] [--height height] [--file-type file-type] <filename
+
+  Options:  
+    --help                      Display help message
+    --width N                   Set image width to N character cells, pixels or percent (see below)
+    --height N                  Set image height to N character cells, pixels or percent (see below)
+    --no-inline                 File will be downloaded instead of displaying inline
+    --type file-type            Provides a type hint
+    
+    If you don't specify width or height an appropriate value will be chosen automatically.
+    The width and height are given as word 'auto' or number N followed by a unit:
+      N      character cells
+      Npx    pixels
+      N%     percent of the session's width or height
+      auto   the image's inherent size will be used to determine an appropriate dimension
+
+    If a type is provided, it is used as a hint to disambiguate.
+    The file type can be a mime type like text/markdown, a language name like Java, or a file extension like .c
+    The file type can usually be inferred from the extension or its contents. -t is most useful when
+    a filename is not available, such as whe input comes from a pipe.
+  "
+}
+
+validate_size_unit() {
+	if ! echo "$1" | grep -q -E "^(:?[0-9]+(:?px|%)?|auto)$"; then
+		err "Invalid image sizing unit - '$1'"
+		show_help
+		exit 1
+	fi
+}
+
+main() {
+	## Default value
+	SCRIPT_NAME="$(basename "$0")"
+	inline_flag=1
+
+	if [ $# -gt 0 ] || has_stdin; then
+		# Look for command line flags.
+		if [ $# -gt 0 ]; then
+			while [ $# -gt 0 ]; do
+				case "$1" in
+				--help)
+					show_help
+					break
+					;;
+				--width)
+					validate_size_unit "$2"
+					width="$2"
+					shift 2
+					;;
+				--height)
+					validate_size_unit "$2"
+					height="$2"
+					shift 2
+					;;
+				--type)
+					file_type="$2"
+					shift 2
+					;;
+				--no-inline)
+					inline_flag=0
+					shift
+					;;
+				-*)
+					err "Unknown argument '$1'"
+					exit 1
+					;;
+				*)
+					file_list="$(printf "%s\n%s" "${file_list+${file_list}}" "$(echo "$1" | base64 -w0)")"
+					shift
+					;;
+				esac
+			done
+
+			if [ "${file_list+1}" ]; then
+				has_stdin() { false; }
+				echo "${file_list}" | base64 -d | while IFS= read -r file; do
+					if [ -d "${file}" ]; then
+						err "'${file}' is a folder"
+						exit 2
+					elif [ -r "${file}" ]; then
+						print_image "${file}" "${inline_flag}" "$(b64_encode <"${file}")" "${width+${width}}" "${height+${height}}" "${preserve_aspect_ratio+}" "${file_type+${file_type}}"
+					fi
+				done
+			fi
+		fi
+
+		if has_stdin; then
+			print_image "" "${inline_flag}" "$(b64_encode)" "${width+${width}}" "${height+${height}}" "${preserve_aspect_ratio+}" "${file_type+${file_type}}"
+		fi
+	else
+		show_help
+	fi
+}
+
+main "$@"
