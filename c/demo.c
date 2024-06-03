@@ -2,8 +2,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#ifndef VERSION
 #define VERSION "0.0.0"
+#endif
+
+#ifndef PROG_NAME
 #define PROG_NAME "demo"
+#endif
 
 struct {
   int help_flag;
